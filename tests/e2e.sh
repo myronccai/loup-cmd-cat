@@ -69,6 +69,7 @@ printf '\001\033\177\200\237\240\303\251\377\n' > high
 printf 'end\r' > cr
 printf '\nafter\n' > nl
 printf 'a\0b\377\n' > binary
+printf 'x\342\r\n' > leadcr
 mkdir dir
 
 # Concatenation and standard input
@@ -100,6 +101,7 @@ check "-e"                  0 $'a\tb^M$\nc^Md$\n'               -e ctrl
 check "-t"                  0 $'a^Ib^M\nc^Md\n'                 -t ctrl
 check "-v high bytes"       0 $'^A^[^?M-^@M-^_M- M-CM-)M-^?\n'  -v high
 check "-v NUL"              0 $'a^@bM-^?\n'                     -v binary
+check "-E stray byte, CR" 0 $'x\342^M$\n'                   -E leadcr
 check "-E held CR + LF"     0 $'end^M$\nafter$\n'               -E cr nl
 check "-E held CR at end"   0 $'end\r'                          -E cr
 check "--show-all"          0 $'a^Ib^M$\nc^Md$\n'               --show-all ctrl

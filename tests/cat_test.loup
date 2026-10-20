@@ -4,7 +4,7 @@ from debug.assert import (expect, expectEq);
 from cli.args import (Options, parse_args);
 from commands.cat import (
     initial_state, render, finish, number_field, visible_byte, visible_text,
-    needs_rendering, operand_problem, io_reason,
+    needs_rendering, operand_problem, io_reason, without_final_cr,
 );
 
 func options(argv: list[string]): Options {
@@ -113,4 +113,10 @@ func test_io_reason(): void {
         "runtime message",
     );
     expectEq(io_reason("something else"), "something else", "unknown shape");
+}
+
+func test_without_final_cr(): void {
+    expectEq(without_final_cr("a\r"), "a", "one CR");
+    expectEq(without_final_cr("a\rb\r"), "a\rb", "only the last");
+    expectEq(without_final_cr("\r"), "", "only a CR");
 }

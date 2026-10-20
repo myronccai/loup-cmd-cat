@@ -94,6 +94,18 @@ pub func visible_text(data: bytes, show_tabs: bool): string {
     return parts.join("");
 }
 
+# `text` without its final "\r". Strings are cut on bytes with `split`:
+# `slice` counts UTF-8 units, and a stray lead byte before the "\r" would
+# make the "\r" part of its unit.
+pub func without_final_cr(text: string): string {
+    let parts = text.split("\r");
+    var kept: list[string] = [];
+    for (i in 0..parts.len() - 1) {
+        kept.push(parts[i]);
+    }
+    return kept.join("\r");
+}
+
 # One line's text (no newline) with -T applied. Under -v the text is
 # already in visible notation, tabs included.
 func render_content(text: string, opts: Options): string {
@@ -126,7 +138,7 @@ pub func render(text: string, opts: Options, start: State): Rendered {
             var content = piece;
             var cr_at_end = false;
             if (hold_cr and content.endsWith("\r")) {
-                content = content.slice(0, content.len() - 1);
+                content = without_final_cr(content);
                 cr_at_end = true;
             }
             if (newlines >= 0 and opts.number) {
