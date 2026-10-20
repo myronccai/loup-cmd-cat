@@ -1,0 +1,116 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from cli.args import (Options, parse_args);
+from commands.cat import (
+    initial_state, render, finish, number_field, visible_byte, visible_text,
+    needs_rendering, operand_problem, io_reason,
+);
+
+func options(argv: list[string]): Options {
+    return parse_args(argv).unwrap();
+}
+
+# The output of cat with `argv` over operands holding `texts`.
+func cat_all(argv: list[string], texts: list[string]): string {
+    let opts = options(argv);
+    var state = initial_state();
+    var out = "";
+    for (text in texts) {
+        let r = render(text, opts, state);
+        out += r.text;
+        state = r.state;
+    }
+    return out + finish(state);
+}
+
+func cat_one(argv: list[string], text: string): string {
+    return cat_all(argv, [text]);
+}
+
+func test_number_field(): void {
+    expectEq(number_field(7), "     7\t", "six columns");
+    expectEq(number_field(1234567), "1234567\t", "wider numbers grow");
+}
+
+func test_no_options_copies(): void {
+    let none: list[string] = [];
+    expect(!needs_rendering(options(none)), "plain copy");
+    expect(needs_rendering(options(["-s"])), "-s renders");
+    expectEq(cat_one(none, "a\n\n\nb"), "a\n\n\nb", "unchanged");
+}
+
+func test_number_all_lines(): void {
+    expectEq(cat_one(["-n"], "a\n\nb\n"), "     1\ta\n     2\t\n     3\tb\n", "-n");
+    expectEq(cat_one(["-n"], "a\nb"), "     1\ta\n     2\tb", "last line without newline");
+    expectEq(cat_one(["-n"], ""), "", "empty input");
+}
+
+func test_number_nonblank(): void {
+    expectEq(cat_one(["-b"], "a\n\nb\n"), "     1\ta\n\n     2\tb\n", "-b");
+    expectEq(cat_one(["-n", "-b"], "\nx\n"), "\n     1\tx\n", "-b overrides -n");
+}
+
+func test_squeeze_blank(): void {
+    expectEq(cat_one(["-s"], "a\n\n\n\nb\n"), "a\n\nb\n", "inner run");
+    expectEq(cat_one(["-s"], "\n\n\na\n"), "\na\n", "leading run");
+    expectEq(cat_one(["-sn"], "a\n\n\nb\n"), "     1\ta\n     2\t\n     3\tb\n", "with -n");
+}
+
+func test_show_ends(): void {
+    expectEq(cat_one(["-E"], "a\n\nb\n"), "a$\n$\nb$\n", "-E");
+    expectEq(cat_one(["-E"], "a\r\nb\rc\n"), "a^M$\nb\rc$\n", "CR before newline");
+}
+
+func test_show_tabs(): void {
+    expectEq(cat_one(["-T"], "a\tb\t\n"), "a^Ib^I\n", "-T");
+}
+
+func test_visible_byte(): void {
+    expectEq(visible_byte(0, false), "^@", "NUL");
+    expectEq(visible_byte(9, false), "\t", "TAB kept");
+    expectEq(visible_byte(9, true), "^I", "TAB with -T");
+    expectEq(visible_byte(27, false), "^[", "ESC");
+    expectEq(visible_byte(65, false), "A", "printable");
+    expectEq(visible_byte(127, false), "^?", "DEL");
+    expectEq(visible_byte(128, false), "M-^@", "128");
+    expectEq(visible_byte(137, false), "M-^I", "128 + TAB");
+    expectEq(visible_byte(160, false), "M- ", "128 + space");
+    expectEq(visible_byte(233, false), "M-i", "233");
+    expectEq(visible_byte(255, false), "M-^?", "255");
+}
+
+func test_visible_text(): void {
+    let data = bytesFromInts([97, 0, 9, 10, 195, 169, 13, 10]);
+    expectEq(visible_text(data, false), "a^@\t\nM-CM-)^M\n", "-v");
+    expectEq(visible_text(data, true), "a^@^I\nM-CM-)^M\n", "-vT");
+}
+
+func test_state_carries_across_operands(): void {
+    expectEq(cat_all(["-n"], ["a\n", "b\n"]), "     1\ta\n     2\tb\n", "numbering continues");
+    expectEq(cat_all(["-n"], ["a", "b\n"]), "     1\tab\n", "partial line continues");
+    expectEq(cat_all(["-s"], ["a\n\n", "\n\nb\n"]), "a\n\nb\n", "squeeze across operands");
+}
+
+func test_carriage_return_held_across_operands(): void {
+    expectEq(cat_all(["-E"], ["a\r", "\nb\n"]), "a^M$\nb$\n", "newline follows");
+    expectEq(cat_all(["-E"], ["a\r", "b\n"]), "a\rb$\n", "text follows");
+    expectEq(cat_all(["-E"], ["a\r"]), "a\r", "end of input");
+    expectEq(cat_all(["-nE"], ["\r", "\nb\n"]), "     1\t^M$\n     2\tb$\n", "with -n");
+}
+
+func test_operand_problem(): void {
+    expectEq(operand_problem("tests/fixtures/lines.txt"), "", "readable");
+    expectEq(operand_problem("-"), "", "standard input");
+    expectEq(operand_problem("tests/fixtures/missing.txt"), "No such file or directory", "missing");
+    expectEq(operand_problem("tests/fixtures"), "Is a directory", "directory");
+}
+
+func test_io_reason(): void {
+    expectEq(
+        io_reason("read_text failed on 'x': Permission denied (os error 13)"),
+        "Permission denied",
+        "runtime message",
+    );
+    expectEq(io_reason("something else"), "something else", "unknown shape");
+}

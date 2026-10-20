@@ -3,11 +3,12 @@
 # Application identity. Keep APP_NAME and APP_VERSION in step with `name`
 # and `version` in package.lppkg.
 
-pub const APP_NAME: string = "myapp";
+pub const APP_NAME: string = "cat";
 pub const APP_VERSION: string = "0.1.0";
-pub const APP_SUMMARY: string = "A command-line application written in Loup.";
+pub const APP_SUMMARY: string = "Concatenate files to standard output (a Loup recreation of GNU cat).";
 
-# Exit statuses returned by main().
+# Exit statuses returned by main(). GNU cat reports usage errors with
+# status 1, the same as a missing file.
 pub const EXIT_OK: int = 0;
 pub const EXIT_FAILURE: int = 1;
-pub const EXIT_USAGE: int = 2;
+pub const EXIT_USAGE: int = 1;

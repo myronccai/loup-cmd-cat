@@ -1,0 +1,256 @@
+@mode(host.dual)
+
+# cat: writes each operand to standard output in turn. With a line option
+# (-n -b -s -E -T -v) the text goes through `render`, which numbers lines,
+# squeezes blank ones and makes characters visible, carrying its `State`
+# from one operand to the next as GNU cat does.
+
+from appinfo import (APP_NAME, EXIT_OK, EXIT_FAILURE);
+from cli.args import (Options);
+from io.fs import (isDir);
+
+# What GNU cat remembers between operands.
+#   newlines     newlines just seen in a row: -1 inside a line, 0 at the
+#                start of a line, 1 after one empty line, 2 after more
+#   line_number  the last line number printed
+#   pending_cr   a "\r" that ended the last operand and is held back: under
+#                -E it prints as ^M if the next operand starts with "\n"
+pub struct State {
+    pub newlines: int;
+    pub line_number: int;
+    pub pending_cr: bool;
+}
+
+# The output for one operand, and the state to carry to the next.
+pub struct Rendered {
+    pub text: string;
+    pub state: State;
+}
+
+pub func initial_state(): State {
+    return State(newlines = 0, line_number = 0, pending_cr = false);
+}
+
+# Whether any option changes the text; without one, cat copies it as is.
+pub func needs_rendering(opts: Options): bool {
+    return opts.number or opts.squeeze_blank or opts.show_ends
+        or opts.show_tabs or opts.show_nonprinting;
+}
+
+# A line number as GNU cat prints it: right-aligned in six columns, then TAB.
+pub func number_field(n: int): string {
+    var digits = str(n);
+    while (digits.len() < 6) {
+        digits = " " + digits;
+    }
+    return digits + "\t";
+}
+
+func ascii(code: int): string {
+    return str(char.of(code));
+}
+
+# The -v notation for one byte other than newline: ^X for control bytes,
+# ^? for DEL, M- and the notation of the low seven bits from 128 up. A TAB
+# stays a TAB unless -T asks for ^I.
+pub func visible_byte(b: int, show_tabs: bool): string {
+    if (b >= 128) {
+        let low = b - 128;
+        if (low >= 32 and low < 127) {
+            return "M-" + ascii(low);
+        }
+        if (low == 127) {
+            return "M-^?";
+        }
+        return "M-^" + ascii(low + 64);
+    }
+    if (b == 127) {
+        return "^?";
+    }
+    if (b >= 32) {
+        return ascii(b);
+    }
+    if (b == 9 and !show_tabs) {
+        return "\t";
+    }
+    return "^" + ascii(b + 64);
+}
+
+# The text cat works on under -v: every byte of `data` except newline in
+# ^ and M- notation. The result is plain ASCII, so it is the same in every
+# lane whatever bytes the input holds.
+#
+# The notation of each byte value is built once and looked up: in a native
+# build every string made per byte would stay allocated until exit.
+pub func visible_text(data: bytes, show_tabs: bool): string {
+    var table: list[string] = [];
+    for (b in 0..256) {
+        table.push(if (b == 10) { "\n" } else { visible_byte(b, show_tabs) });
+    }
+    var parts: list[string] = [];
+    for (i in 0..data.len()) {
+        parts.push(table[data[i]]);
+    }
+    return parts.join("");
+}
+
+# One line's text (no newline) with -T applied. Under -v the text is
+# already in visible notation, tabs included.
+func render_content(text: string, opts: Options): string {
+    if (opts.show_tabs and !opts.show_nonprinting) {
+        return text.replace("\t", "^I");
+    }
+    return text;
+}
+
+# The output for one operand's `text`, starting from `start`. Under -v,
+# `text` is the operand passed through `visible_text`.
+pub func render(text: string, opts: Options, start: State): Rendered {
+    let hold_cr = opts.show_ends and !opts.show_nonprinting;
+    var newlines = start.newlines;
+    var line_number = start.line_number;
+    var pending_cr = start.pending_cr;
+    var out: list[string] = [];
+
+    let pieces = text.split("\n");
+    let last = pieces.len() - 1;
+    for (i in 0..pieces.len()) {
+        let piece = pieces[i];
+        let ended = i < last;
+        if (pending_cr and (ended or piece != "")) {
+            pending_cr = false;
+            out.push(if (piece == "") { "^M" } else { "\r" });
+        }
+
+        if (piece != "") {
+            var content = piece;
+            var cr_at_end = false;
+            if (hold_cr and content.endsWith("\r")) {
+                content = content.slice(0, content.len() - 1);
+                cr_at_end = true;
+            }
+            if (newlines >= 0 and opts.number) {
+                line_number += 1;
+                out.push(number_field(line_number));
+            }
+            out.push(render_content(content, opts));
+            newlines = -1;
+            if (cr_at_end) {
+                if (ended) {
+                    out.push("^M");
+                } else {
+                    pending_cr = true;
+                }
+            }
+        }
+        if (!ended) {
+            break;
+        }
+
+        # The newline after the piece.
+        newlines += 1;
+        var skip = false;
+        if (newlines > 0) {
+            if (newlines >= 2) {
+                newlines = 2;
+                skip = opts.squeeze_blank;
+            }
+            if (!skip and opts.number and !opts.number_nonblank) {
+                line_number += 1;
+                out.push(number_field(line_number));
+            }
+        }
+        if (!skip) {
+            if (opts.show_ends) {
+                out.push("$");
+            }
+            out.push("\n");
+        }
+    }
+
+    return Rendered(
+        text = out.join(""),
+        state = State(newlines = newlines, line_number = line_number, pending_cr = pending_cr),
+    );
+}
+
+# What is left to print after the last operand: a held-back "\r".
+pub func finish(state: State): string {
+    return if (state.pending_cr) { "\r" } else { "" };
+}
+
+# Why `name` cannot be read, in GNU's words, or "" if it looks readable.
+pub func operand_problem(name: string): string {
+    if (name == "-") {
+        return "";
+    }
+    if (!exists(name)) {
+        return "No such file or directory";
+    }
+    if (isDir(name)) {
+        return "Is a directory";
+    }
+    return "";
+}
+
+# The reason in a runtime IoError message such as
+# "read_text failed on 'x': Permission denied (os error 13)".
+pub func io_reason(message: string): string {
+    var reason = message;
+    let start = reason.index_of("': ");
+    if (start >= 0) {
+        reason = reason.slice(start + 3);
+    }
+    let end = reason.index_of(" (os error");
+    if (end >= 0) {
+        reason = reason.slice(0, end);
+    }
+    return reason;
+}
+
+func report(name: string, reason: string): void {
+    printErr(i"{$ APP_NAME $}: {$ name $}: {$ reason $}");
+}
+
+pub func run_cat(opts: Options): int {
+    var names: list[string] = opts.operands;
+    if (names.len() == 0) {
+        names.push("-");
+    }
+    let rendering = needs_rendering(opts);
+    var status = EXIT_OK;
+    var state = initial_state();
+
+    for (name in names) {
+        let problem = operand_problem(name);
+        if (problem != "") {
+            report(name, problem);
+            status = EXIT_FAILURE;
+            continue;
+        }
+        let path = if (name == "-") { "/dev/stdin" } else { name };
+        var text = "";
+        var read_ok = true;
+        try {
+            text = if (opts.show_nonprinting) {
+                visible_text(readBytes(path), opts.show_tabs)
+            } else {
+                readText(path)
+            };
+        } catch (IoError as e) {
+            report(name, io_reason(e.message));
+            read_ok = false;
+        }
+        if (!read_ok) {
+            status = EXIT_FAILURE;
+        } else if (rendering) {
+            let rendered = render(text, opts, state);
+            state = rendered.state;
+            print(rendered.text);
+        } else {
+            print(text);
+        }
+    }
+    print(finish(state));
+    return status;
+}

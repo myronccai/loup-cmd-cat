@@ -1,64 +1,87 @@
 @mode(host.dual)
 
 from debug.assert import (expect, expectEq);
-from cli.args import (parse_args, DEFAULT_GREETING);
+from cli.args import (parse_args, match_long, long_names);
 
 func test_no_arguments(): void {
     let none: list[string] = [];
     let opts = parse_args(none).unwrap();
-    expectEq(opts.command, "", "no command");
     expectEq(opts.operands.len(), 0, "no operands");
-    expectEq(opts.greeting, DEFAULT_GREETING, "default greeting");
-    expect(!opts.help and !opts.version and !opts.verbose and !opts.shout, "no flags set");
+    expect(!opts.number and !opts.squeeze_blank and !opts.show_ends, "no options");
+    expect(!opts.help and !opts.version, "no help or version");
 }
 
-func test_command_and_operands(): void {
-    let opts = parse_args(["hello", "Ann"]).unwrap();
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands.len(), 1, "one operand");
-    expectEq(opts.operands[0], "Ann", "operand");
+func test_short_options_combine(): void {
+    let opts = parse_args(["-nET", "f"]).unwrap();
+    expect(opts.number and opts.show_ends and opts.show_tabs, "-nET");
+    expect(!opts.show_nonprinting, "no -v");
+    expectEq(opts.operands[0], "f", "operand");
 }
 
-func test_flags_anywhere(): void {
-    let opts = parse_args(["-v", "hello", "--shout", "Ann"]).unwrap();
-    expect(opts.verbose, "verbose");
-    expect(opts.shout, "shout");
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands[0], "Ann", "operand");
+func test_number_nonblank_implies_number(): void {
+    let opts = parse_args(["-b"]).unwrap();
+    expect(opts.number and opts.number_nonblank, "-b");
 }
 
-func test_help_and_version(): void {
-    expect(parse_args(["--help"]).unwrap().help, "--help");
-    expect(parse_args(["-h"]).unwrap().help, "-h");
-    expect(parse_args(["--version"]).unwrap().version, "--version");
-    expect(parse_args(["-V"]).unwrap().version, "-V");
+func test_shorthand_options(): void {
+    let all = parse_args(["-A"]).unwrap();
+    expect(all.show_nonprinting and all.show_ends and all.show_tabs, "-A is -vET");
+    let e = parse_args(["-e"]).unwrap();
+    expect(e.show_nonprinting and e.show_ends and !e.show_tabs, "-e is -vE");
+    let t = parse_args(["-t"]).unwrap();
+    expect(t.show_nonprinting and t.show_tabs and !t.show_ends, "-t is -vT");
+    let u = parse_args(["-u"]).unwrap();
+    expect(!needs_any(u.number, u.show_ends, u.show_nonprinting), "-u is ignored");
 }
 
-func test_value_option_forms(): void {
-    expectEq(parse_args(["-g", "Hi"]).unwrap().greeting, "Hi", "-g VALUE");
-    expectEq(parse_args(["--greeting", "Hi"]).unwrap().greeting, "Hi", "--greeting VALUE");
-    expectEq(parse_args(["--greeting=a=b"]).unwrap().greeting, "a=b", "--greeting=VALUE keeps '='");
+func needs_any(a: bool, b: bool, c: bool): bool {
+    return a or b or c;
 }
 
-func test_double_dash_ends_options(): void {
-    let opts = parse_args(["hello", "--", "--shout"]).unwrap();
-    expect(!opts.shout, "--shout after -- is an operand");
-    expectEq(opts.operands[0], "--shout", "operand");
+func test_options_after_operands(): void {
+    let opts = parse_args(["a", "-n", "b"]).unwrap();
+    expect(opts.number, "-n after an operand");
+    expectEq(opts.operands.len(), 2, "two operands");
+    expectEq(opts.operands[1], "b", "order kept");
 }
 
-func test_lone_dash_is_operand(): void {
-    let opts = parse_args(["hello", "-"]).unwrap();
-    expectEq(opts.operands[0], "-", "operand");
+func test_double_dash_and_lone_dash(): void {
+    let opts = parse_args(["-", "--", "-n", "--"]).unwrap();
+    expect(!opts.number, "-n after -- is an operand");
+    expectEq(opts.operands.len(), 3, "three operands");
+    expectEq(opts.operands[0], "-", "lone dash");
+    expectEq(opts.operands[2], "--", "second -- is an operand");
 }
 
-func test_unknown_option(): void {
-    expectEq(parse_args(["--nope"]).unwrap_err(), "unknown option '--nope'", "error message");
+func test_long_options(): void {
+    let opts = parse_args(["--number", "--squeeze-blank", "--show-all"]).unwrap();
+    expect(opts.number and opts.squeeze_blank, "number, squeeze");
+    expect(opts.show_nonprinting and opts.show_ends and opts.show_tabs, "show-all");
 }
 
-func test_missing_value(): void {
-    expectEq(parse_args(["-g"]).unwrap_err(), "option '-g' requires a value", "error message");
+func test_long_option_prefixes(): void {
+    expectEq(match_long("squ", "--squ", long_names()).unwrap(), "squeeze-blank", "unique prefix");
+    expectEq(match_long("number", "--number", long_names()).unwrap(), "number", "exact beats prefix");
+    expectEq(
+        match_long("num", "--num", long_names()).unwrap_err(),
+        "option '--num' is ambiguous; possibilities: '--number-nonblank' '--number'",
+        "ambiguous",
+    );
+    expectEq(match_long("frob", "--frob", long_names()).unwrap_err(), "unrecognized option '--frob'", "unknown");
 }
 
-func test_flag_with_value(): void {
-    expectEq(parse_args(["--shout=1"]).unwrap_err(), "option '--shout' does not take a value", "error message");
+func test_usage_errors(): void {
+    expectEq(parse_args(["-x"]).unwrap_err(), "invalid option -- 'x'", "short");
+    expectEq(parse_args(["-nz"]).unwrap_err(), "invalid option -- 'z'", "in a group");
+    expectEq(
+        parse_args(["--number=2"]).unwrap_err(),
+        "option '--number' doesn't allow an argument",
+        "argument",
+    );
+}
+
+func test_help_and_version_stop_parsing(): void {
+    expect(parse_args(["--help", "-x"]).unwrap().help, "--help before a bad option");
+    expect(parse_args(["--vers"]).unwrap().version, "--version abbreviated");
+    expect(parse_args(["-x", "--help"]).is_err(), "bad option first");
 }

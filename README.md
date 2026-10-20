@@ -1,12 +1,13 @@
-# template Loup commandline application
+# loup-cmd-cat
 
-A GitHub template for a command-line application written in
-[Loup](https://code-craft.ai/references/loup). It includes argument parsing,
-command dispatch, a sample `hello` command, tests, a native build and a CI
-workflow.
+GNU `cat` recreated in [Loup](https://code-craft.ai/references/loup):
+concatenate files (or standard input) to standard output, with line numbers,
+blank-line squeezing and visible control characters.
 
-After creating a repository from this template, work through
-[REPOSITORY_TODOS.md](REPOSITORY_TODOS.md).
+Part of the **loup-cmd** series of example applications: classic Linux and
+Windows commands, and projects for each Loup execution mode, each in its own
+repository under [myronccai](https://github.com/myronccai?tab=repositories&q=loup-cmd).
+This one is `host.dual` Loup built as a native binary.
 
 ## Requirements
 
@@ -14,70 +15,101 @@ After creating a repository from this template, work through
 
   ```sh
   curl -fsSL https://github.com/code-craft-ai-company/loup-releases/releases/latest/download/loup-install.sh | sh
-  loup --version
   ```
 
-- `make`
-- `clang` 17 or later for native builds. Native builds are supported on Linux
-  x86-64 and arm64, and are a preview on macOS and Windows.
+- `make`, and `clang` 17 or later for the native build.
 
 ## Usage
 
 ```sh
-make run ARGS="--help"            # run from source
-make run ARGS="hello Ann --shout"
-make check                        # type-check the program
-make test                         # run the tests in tests/
-make build                        # native binary: build/myapp
-make ci                           # check, test, build and smoke-test the binary
-make clean
+make build                     # native binary: build/cat
+make ci                        # check, unit tests, build, end-to-end tests
+make run ARGS="-n README.md"   # run from source with loup run
 ```
 
 ```text
-$ build/myapp --help
-usage: myapp [OPTIONS] COMMAND [ARGS...]
+$ build/cat -n notes.txt
+     1	alpha
+     2	
+     3	
+     4	
+     5	beta
+$ build/cat -sb notes.txt
+     1	alpha
 
-A command-line application written in Loup.
+     2	beta
+$ build/cat -A dos.txt
+name^Isize^M$
+file^I42^M$
+$ printf 'caf\303\251 \001\n' | build/cat -v
+cafM-CM-) ^A
+$ build/cat notes.txt missing.txt; echo "exit $?"
+alpha
 
-Commands:
-  hello [NAME]          Print a greeting (NAME defaults to 'world')
-  help                  Show this help
 
-Options:
-  -g, --greeting TEXT   Greeting used by 'hello' (default: Hello)
-      --shout           Print the greeting in upper case
-  -v, --verbose         Print diagnostic messages to stderr
-  -h, --help            Show this help and exit
-  -V, --version         Show the version and exit
+
+beta
+cat: missing.txt: No such file or directory
+exit 1
+$ build/cat --show
+cat: option '--show' is ambiguous; possibilities: '--show-nonprinting' '--show-ends' '--show-tabs' '--show-all'
+Try 'cat --help' for more information.
+$ build/cat --version
+cat (loup-cmd-cat) 0.1.0
 ```
 
-Exit status: `0` success, `1` runtime failure, `2` usage error.
+With no FILE, or when FILE is `-`, cat reads standard input. Files are copied
+byte for byte, including NUL bytes and bytes that are not UTF-8.
+
+| Option | Meaning |
+|---|---|
+| `-n`, `--number` | number all output lines |
+| `-b`, `--number-nonblank` | number non-empty lines only; overrides `-n` |
+| `-s`, `--squeeze-blank` | print one empty line in place of a run of them |
+| `-E`, `--show-ends` | print `$` at the end of each line (`^M$` after a CR) |
+| `-T`, `--show-tabs` | print TAB as `^I` |
+| `-v`, `--show-nonprinting` | `^` and `M-` notation for control and high bytes, except newline and TAB |
+| `-A`, `--show-all` | same as `-vET` |
+| `-e` / `-t` | same as `-vE` / `-vT` |
+| `-u` | ignored |
+
+Short options combine (`-sn`), options may follow file names, `--` ends the
+options, and long options may be shortened to any unique prefix
+(`--squeeze`). Line numbers, blank-line runs and an unfinished last line
+carry over from one file to the next, as in GNU cat.
+
+Exit status: `0` on success; `1` if any operand could not be read or the
+command line was invalid (GNU cat uses `1` for both).
+
+## Differences from GNU cat
+
+- Each file is read whole before it is written (Loup 1.26.0 has no streaming
+  reads), so an endless input such as `cat /dev/zero` prints nothing, and
+  memory grows with the input; `-v` needs about 17 bytes per input byte.
+- A file that exists but cannot be read (no read permission) stops the native
+  binary with the runtime's own message, e.g.
+  `IoError: read_text failed on 'secret': Permission denied (os error 13)`,
+  and status 1; later operands are not read. The native runtime cannot raise
+  a catchable `IoError`, and Loup has no `stat()` to check permissions first.
+  Missing files and directories are checked beforehand and reported as GNU
+  does.
+- The "input file is output file" check is not made.
+- `--version` prints a single line.
 
 ## Layout
 
 ```text
-package.lppkg            # Loup manifest
-Makefile                 # run, check, test, build, ci, clean
-source/                  # the application's Loup code
-├── main.loup            # entry point
-├── cli/                 # argument parsing, help text, command dispatch
-└── commands/            # one module per command
-tests/                   # *_test.loup files
-specs/                   # feature specs: requirements, design, tasks
-skills/loup-programmer/  # agent skill for writing Loup
+source/main.loup            # entry point
+source/appinfo.loup         # name, version, exit statuses
+source/cli/args.loup        # GNU getopt-style option parsing
+source/cli/usage.loup       # --help and --version text
+source/cli/app.loup         # run(): parse, dispatch, exit status
+source/commands/cat.loup    # reading operands, numbering, visible characters
+tests/*_test.loup           # unit tests (make test)
+tests/fixtures/             # files read by the unit tests
+tests/e2e.sh                # end-to-end tests of build/cat (make e2e)
+specs/cat/                  # requirements, design, tasks
 ```
 
-[AGENTS.md](AGENTS.md) has the full layout, every build and test command, and
-the steps for adding a command.
-
-## Notes on the toolchain
-
-- On Linux x86-64, `loup` is the self-hosted driver and `loup-bootstrap` is
-  Stage0. `check` and `test` use `loup-bootstrap`; on other platforms both
-  names run the same tool. The Makefile handles this.
-- Modules import each other by their path under `source/`
-  (`from cli.args import (Options);`). Tests import them the same way, which
-  is why `make test` puts `source/` on `LOUPPATH`.
-- The Wasm build (`loup-bootstrap build`) is experimental: modules that use
-  `i"..."` interpolation build but trap at run time, so this template builds
-  native binaries.
+[AGENTS.md](AGENTS.md) has every build and test command and the conventions
+for changing the code.
