@@ -4,6 +4,16 @@
 # (-n -b -s -E -T -v) the text goes through `render`, which numbers lines,
 # squeezes blank ones and makes characters visible, carrying its `State`
 # from one operand to the next as GNU cat does.
+#
+# Runtime: host.dual. Compiled into the native binary build/cat by `make
+# build`; `loup run source/main.loup` interprets the same code. In both,
+# strings are raw bytes, so a binary file is copied exactly; the Stage0 test
+# runner insists on valid UTF-8, so such cases live in tests/e2e.sh.
+#
+# Structure: the State carried between operands; the -v notation of a byte
+# (visible_byte, visible_text); the line renderer (render, finish); the
+# error helpers (operand_problem, io_reason); and run_cat, the only
+# function that prints.
 
 from appinfo import (APP_NAME, EXIT_OK, EXIT_FAILURE);
 from cli.args import (Options);
@@ -124,11 +134,19 @@ pub func render(text: string, opts: Options, start: State): Rendered {
     var pending_cr = start.pending_cr;
     var out: list[string] = [];
 
+    # Cut the text at each "\n": every piece but the last is followed by a
+    # newline (`ended`); the last is what follows the final newline, often
+    # "". Each piece prints the held "\r" if any, then its number and
+    # content, then its newline, which advances `newlines` so that -n, -b
+    # and -s see runs of empty lines even across operand boundaries.
     let pieces = text.split("\n");
     let last = pieces.len() - 1;
     for (i in 0..pieces.len()) {
         let piece = pieces[i];
         let ended = i < last;
+        # A "\r" held from the previous operand shows as ^M only when a
+        # newline comes straight after it; an empty last piece decides
+        # nothing, so the "\r" stays held.
         if (pending_cr and (ended or piece != "")) {
             pending_cr = false;
             out.push(if (piece == "") { "^M" } else { "\r" });
@@ -234,6 +252,9 @@ pub func run_cat(opts: Options): int {
     var state = initial_state();
 
     for (name in names) {
+        # Check first what can be checked: natively a failed read ends the
+        # program instead of throwing, so the catch below only helps under
+        # Stage0.
         let problem = operand_problem(name);
         if (problem != "") {
             report(name, problem);

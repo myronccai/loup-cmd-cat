@@ -1,5 +1,14 @@
 @mode(host.dual)
 
+# Unit tests for cat's rendering (commands.cat): numbering, squeezing, -E,
+# -T, the -v notation, state carried across operands, and the error
+# helpers. The text inputs are valid UTF-8, as Stage0 strings must be;
+# other bytes are covered by tests/e2e.sh.
+#
+# Runtime: host.dual, run by the test runner: `make test` interprets this
+# file with Stage0 (`loup-bootstrap test`, source/ on LOUPPATH), one test
+# per `func test_*()`. It is not part of the binary.
+
 from debug.assert import (expect, expectEq);
 from cli.args import (Options, parse_args);
 from commands.cat import (
