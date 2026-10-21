@@ -17,6 +17,7 @@
 
 from appinfo import (APP_NAME, EXIT_OK, EXIT_FAILURE);
 from cli.args import (Options);
+from core.string_utils import (padLeft);
 from io.fs import (isDir);
 
 # What GNU cat remembers between operands.
@@ -49,11 +50,7 @@ pub func needs_rendering(opts: Options): bool {
 
 # A line number as GNU cat prints it: right-aligned in six columns, then TAB.
 pub func number_field(n: int): string {
-    var digits = str(n);
-    while (digits.len() < 6) {
-        digits = " " + digits;
-    }
-    return digits + "\t";
+    return padLeft(str(n), 6, " ") + "\t";
 }
 
 func ascii(code: int): string {
@@ -209,18 +206,18 @@ pub func finish(state: State): string {
     return if (state.pending_cr) { "\r" } else { "" };
 }
 
-# Why `name` cannot be read, in GNU's words, or "" if it looks readable.
-pub func operand_problem(name: string): string {
+# Why `name` cannot be read, in GNU's words, or None if it looks readable.
+pub func operand_problem(name: string): string? {
     if (name == "-") {
-        return "";
+        return None;
     }
     if (!exists(name)) {
-        return "No such file or directory";
+        return Some("No such file or directory");
     }
     if (isDir(name)) {
-        return "Is a directory";
+        return Some("Is a directory");
     }
-    return "";
+    return None;
 }
 
 # The reason in a runtime IoError message such as
@@ -256,8 +253,8 @@ pub func run_cat(opts: Options): int {
         # program instead of throwing, so the catch below only helps under
         # Stage0.
         let problem = operand_problem(name);
-        if (problem != "") {
-            report(name, problem);
+        if (problem.is_some()) {
+            report(name, problem.unwrap());
             status = EXIT_FAILURE;
             continue;
         }

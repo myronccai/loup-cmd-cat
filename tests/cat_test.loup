@@ -9,7 +9,7 @@
 # file with Stage0 (`loup-bootstrap test`, source/ on LOUPPATH), one test
 # per `func test_*()`. It is not part of the binary.
 
-from debug.assert import (expect, expectEq);
+from debug.assert import (expect, expectEq, expectSome);
 from cli.args import (Options, parse_args);
 from commands.cat import (
     initial_state, render, finish, number_field, visible_byte, visible_text,
@@ -109,10 +109,11 @@ func test_carriage_return_held_across_operands(): void {
 }
 
 func test_operand_problem(): void {
-    expectEq(operand_problem("tests/fixtures/lines.txt"), "", "readable");
-    expectEq(operand_problem("-"), "", "standard input");
-    expectEq(operand_problem("tests/fixtures/missing.txt"), "No such file or directory", "missing");
-    expectEq(operand_problem("tests/fixtures"), "Is a directory", "directory");
+    expect(operand_problem("tests/fixtures/lines.txt").is_none(), "readable");
+    expect(operand_problem("-").is_none(), "standard input");
+    expectEq(expectSome(operand_problem("tests/fixtures/missing.txt"), "missing"),
+        "No such file or directory", "missing");
+    expectEq(expectSome(operand_problem("tests/fixtures"), "directory"), "Is a directory", "directory");
 }
 
 func test_io_reason(): void {
